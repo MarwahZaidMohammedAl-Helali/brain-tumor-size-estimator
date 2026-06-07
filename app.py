@@ -65,12 +65,37 @@ use_downsampling = st.sidebar.checkbox("Downsampling",   value=True)
 use_blur        = st.sidebar.checkbox("Motion Blur",     value=True)
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("Example Patient")
-example_id = st.sidebar.text_input(
-    "Patient ID for Plot 3",
-    value="BraTS2021_00506",
-    help="Falls back to the first valid patient if not found."
-)
+st.sidebar.subheader("Example Patient (for Segmentation View)")
+
+@st.cache_data
+def list_valid_patients(dataset_dir):
+    """Return sorted list of patient IDs that have both t1ce and seg files."""
+    import glob as _glob
+    valid = []
+    if not os.path.isdir(dataset_dir):
+        return valid
+    for entry in sorted(os.listdir(dataset_dir)):
+        subdir = os.path.join(dataset_dir, entry)
+        if not os.path.isdir(subdir):
+            continue
+        if (_glob.glob(os.path.join(subdir, "*_t1ce.nii.gz")) and
+                _glob.glob(os.path.join(subdir, "*_seg.nii.gz"))):
+            valid.append(entry)
+    return valid
+
+all_patient_ids = list_valid_patients(DATASET_DIR)
+
+if all_patient_ids:
+    default_idx = all_patient_ids.index("BraTS2021_00506") if "BraTS2021_00506" in all_patient_ids else 0
+    example_id = st.sidebar.selectbox(
+        "Select example patient",
+        options=all_patient_ids,
+        index=default_idx,
+        help="This patient will be shown in the Segmentation View tab."
+    )
+else:
+    example_id = "BraTS2021_00506"
+    st.sidebar.warning("Dataset folder not found — cannot list patients.")
 
 st.sidebar.markdown("---")
 run_button = st.sidebar.button("▶  Run Pipeline", type="primary", use_container_width=True)
