@@ -1,10 +1,8 @@
 """
-app.py — Streamlit Dashboard for MRI Quality Degradation Research
-Wraps the analyze.py pipeline with an interactive web interface.
+app.py - Brain Tumor Size Estimator Dashboard
 """
 
 import os
-import io
 import sys
 import importlib
 
@@ -28,17 +26,16 @@ st.set_page_config(
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-PROJECT_DIR  = r"C:\Users\marwa\Pictures\Marwah (1)\Projects\Project 2"
-DATASET_DIR  = os.path.join(PROJECT_DIR, "Data", "BraTS2021_Training_Data")
-OUTPUT_CSV   = os.path.join(PROJECT_DIR, "results.csv")
-OUTPUT_DIR   = PROJECT_DIR
+PROJECT_DIR = r"C:\Users\marwa\Pictures\Marwah (1)\Projects\Project 2"
+DATASET_DIR = os.path.join(PROJECT_DIR, "Data", "BraTS2021_Training_Data")
+OUTPUT_CSV  = os.path.join(PROJECT_DIR, "results.csv")
+OUTPUT_DIR  = PROJECT_DIR
 
-# Add project dir to path so we can import analyze.py
 if PROJECT_DIR not in sys.path:
     sys.path.insert(0, PROJECT_DIR)
 
 # ---------------------------------------------------------------------------
-# Import pipeline functions from analyze.py
+# Load pipeline
 # ---------------------------------------------------------------------------
 @st.cache_resource
 def load_pipeline():
@@ -47,29 +44,10 @@ def load_pipeline():
     return az
 
 # ---------------------------------------------------------------------------
-# Sidebar — configuration
+# Get list of valid patients
 # ---------------------------------------------------------------------------
-st.sidebar.image("https://img.icons8.com/emoji/96/brain-emoji.png", width=60)
-st.sidebar.title("🧠 Pipeline Settings")
-
-max_patients = st.sidebar.slider(
-    "Number of patients to process",
-    min_value=1, max_value=100, value=10, step=1,
-    help="Processing all 100 patients takes ~10–30 minutes on a CPU laptop."
-)
-
-st.sidebar.markdown("---")
-st.sidebar.subheader("Degradation Types")
-use_erosion     = st.sidebar.checkbox("Noise Erosion",   value=True)
-use_downsampling = st.sidebar.checkbox("Downsampling",   value=True)
-use_blur        = st.sidebar.checkbox("Motion Blur",     value=True)
-
-st.sidebar.markdown("---")
-st.sidebar.subheader("Example Patient (for Segmentation View)")
-
 @st.cache_data
 def list_valid_patients(dataset_dir):
-    """Return sorted list of patient IDs that have both t1ce and seg files."""
     import glob as _glob
     valid = []
     if not os.path.isdir(dataset_dir):
@@ -83,30 +61,63 @@ def list_valid_patients(dataset_dir):
             valid.append(entry)
     return valid
 
-all_patient_ids = list_valid_patients(DATASET_DIR)
+# ---------------------------------------------------------------------------
+# Sidebar
+# ---------------------------------------------------------------------------
+st.sidebar.image("https://img.icons8.com/emoji/96/brain-emoji.png", width=60)
+st.sidebar.title("Settings")
 
+st.sidebar.markdown("### How many patients?")
+max_patients = st.sidebar.slider(
+    "Number of patients to analyze",
+    min_value=1, max_value=100, value=10, step=1,
+    help="More patients = more accurate results but takes longer. Start with 10 to test."
+)
+
+st.sidebar.markdown("---")
+st.sidebar.markdown("### What type of image problem to test?")
+use_erosion      = st.sidebar.checkbox(
+    "Grainy / Noisy scan",
+    value=True,
+    help="Simulates a scan with a lot of noise around the tumor edges."
+)
+use_downsampling = st.sidebar.checkbox(
+    "Blurry / Low resolution scan",
+    value=True,
+    help="Simulates a scan taken at lower quality — less detail."
+)
+use_blur         = st.sidebar.checkbox(
+    "Patient moved during scan",
+    value=True,
+    help="Simulates blur caused by the patient moving while being scanned."
+)
+
+st.sidebar.markdown("---")
+st.sidebar.markdown("### Pick a patient to view up close")
+
+all_patient_ids = list_valid_patients(DATASET_DIR)
 if all_patient_ids:
     default_idx = all_patient_ids.index("BraTS2021_00506") if "BraTS2021_00506" in all_patient_ids else 0
     example_id = st.sidebar.selectbox(
-        "Select example patient",
+        "Choose a patient for the scan view",
         options=all_patient_ids,
         index=default_idx,
-        help="This patient will be shown in the Segmentation View tab."
+        help="This patient's brain scan will be shown in the 'Scan View' tab."
     )
 else:
     example_id = "BraTS2021_00506"
-    st.sidebar.warning("Dataset folder not found — cannot list patients.")
+    st.sidebar.warning("Could not find the dataset folder.")
 
 st.sidebar.markdown("---")
-run_button = st.sidebar.button("▶  Run Pipeline", type="primary", use_container_width=True)
+run_button = st.sidebar.button("Run Analysis", type="primary", use_container_width=True)
 
 # ---------------------------------------------------------------------------
-# Title
+# Page title
 # ---------------------------------------------------------------------------
 st.title("🧠 Brain Tumor Size Estimator")
 st.markdown(
-    "**Research tool** — quantifies how MRI image quality degradation affects "
-    "brain tumor size measurement accuracy using the BraTS 2021 dataset."
+    "This tool checks **how much a bad quality MRI scan affects the measurement of brain tumor size**. "
+    "It compares the tumor size from a clean scan vs. a degraded one and tells you how far off the measurement is."
 )
 st.markdown("---")
 
@@ -123,28 +134,28 @@ if "example_patient" not in st.session_state:
 # ---------------------------------------------------------------------------
 # Run pipeline
 # ---------------------------------------------------------------------------
-def run_pipeline(max_pts: int, active_types: list, ex_id: str):
+def run_pipeline(max_pts, active_types, ex_id):
     az = load_pipeline()
 
-    progress_bar = st.progress(0, text="Discovering patients…")
+    progress_bar = st.progress(0, text="Looking for patients...")
     status_box   = st.empty()
 
     patients = az.discover_patients(DATASET_DIR, max_patients=max_pts)
     if not patients:
-        st.error("No valid patients found. Check the dataset path.")
+        st.error("No patients found. Please check the dataset folder.")
         return None, None
 
-    all_records   = []
+    all_records     = []
     example_patient = None
     n = len(patients)
 
     for i, patient in enumerate(patients):
-        progress_bar.progress((i) / n, text=f"Processing {patient['patient_id']} ({i+1}/{n})…")
-        status_box.info(f"⏳ Patient {i+1}/{n}: `{patient['patient_id']}`")
+        progress_bar.progress(i / n, text=f"Analyzing patient {i+1} of {n}...")
+        status_box.info(f"Working on: {patient['patient_id']}  ({i+1}/{n})")
         try:
             import nibabel as nib
-            seg_img  = nib.load(patient["seg_path"])
-            t1ce_img = nib.load(patient["t1ce_path"])
+            seg_img   = nib.load(patient["seg_path"])
+            t1ce_img  = nib.load(patient["t1ce_path"])
             seg_data  = seg_img.get_fdata().astype(np.int16)
             t1ce_data = t1ce_img.get_fdata()
             spacing   = seg_img.header.get_zooms()[:3]
@@ -154,7 +165,6 @@ def run_pipeline(max_pts: int, active_types: list, ex_id: str):
                 continue
 
             degradations_all = az.simulate_degradations(seg_data, gold["binary_mask"])
-            # Filter by selected types
             degradations = [
                 d for d in degradations_all
                 if (d["degradation_type"] == "erosion"      and use_erosion)
@@ -167,7 +177,7 @@ def run_pipeline(max_pts: int, active_types: list, ex_id: str):
                     "patient_id":    patient["patient_id"],
                     "t1ce_data":     t1ce_data,
                     "seg_data":      seg_data,
-                    "degradations":  degradations_all,   # always pass all 9 for Plot 3
+                    "degradations":  degradations_all,
                     "mid_slice_idx": gold["mid_slice_idx"],
                 }
 
@@ -189,11 +199,11 @@ def run_pipeline(max_pts: int, active_types: list, ex_id: str):
                     "clinically_dangerous":         errors["clinically_dangerous"],
                 })
         except Exception as e:
-            status_box.warning(f"⚠️ Skipped `{patient['patient_id']}`: {e}")
+            status_box.warning(f"Skipped {patient['patient_id']}: {e}")
             continue
 
     progress_bar.progress(1.0, text="Done!")
-    status_box.success(f"✅ Processed {n} patients → {len(all_records)} records.")
+    status_box.success(f"Finished! Analyzed {n} patients and got {len(all_records)} measurements.")
 
     columns = [
         "patient_id", "degradation_type", "degradation_level",
@@ -215,186 +225,221 @@ if run_button:
     if use_blur:         active_types.append("motion_blur")
 
     if not active_types:
-        st.sidebar.error("Select at least one degradation type.")
+        st.sidebar.error("Please select at least one image problem type.")
     else:
-        with st.spinner("Running pipeline…"):
+        with st.spinner("Running analysis..."):
             df, ep = run_pipeline(max_patients, active_types, example_id)
         if df is not None and not df.empty:
             st.session_state.results_df = df
             st.session_state.example_patient = ep
             st.session_state.run_complete = True
 
-# Load existing results if available and not yet run
+# Auto-load previous results
 if st.session_state.results_df is None and os.path.exists(OUTPUT_CSV):
     try:
         st.session_state.results_df = pd.read_csv(OUTPUT_CSV)
         st.session_state.run_complete = True
-        st.info("📂 Loaded existing `results.csv`. Hit **Run Pipeline** to regenerate.")
+        st.info("Previous results loaded automatically. Press 'Run Analysis' to start fresh.")
     except Exception:
         pass
 
 # ---------------------------------------------------------------------------
-# Main content tabs
+# Tabs
 # ---------------------------------------------------------------------------
 if st.session_state.run_complete and st.session_state.results_df is not None:
     df = st.session_state.results_df
     ep = st.session_state.example_patient
 
-    tab_summary, tab_results, tab_plots, tab_plot3 = st.tabs([
-        "📊 Summary", "📋 Results Table", "📈 Plots", "🖼️ Segmentation View"
+    tab_summary, tab_results, tab_plots, tab_scan = st.tabs([
+        "Overview", "Full Data Table", "Charts", "Scan View"
     ])
 
+    # friendly display names
+    type_display = {
+        "erosion":      "Grainy Scan",
+        "downsampling": "Blurry Scan",
+        "motion_blur":  "Motion Blur",
+    }
+
     # -----------------------------------------------------------------------
-    # TAB 1 — Summary
+    # TAB 1 — Overview
     # -----------------------------------------------------------------------
     with tab_summary:
-        st.subheader("Pipeline Summary")
+        st.subheader("Quick Overview")
+        st.markdown("Here is a summary of what was found across all patients and scan quality problems tested.")
 
         col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Patients Processed", df["patient_id"].nunique())
-        col2.metric("Total Records",       len(df))
-        col3.metric("Clinically Dangerous",
-                    f"{df['clinically_dangerous'].sum()} "
-                    f"({df['clinically_dangerous'].mean()*100:.1f}%)")
-        col4.metric("Mean Dice Score",     f"{df['dice_score'].mean():.3f}")
+        col1.metric("Patients Analyzed",     df["patient_id"].nunique())
+        col2.metric("Total Measurements",    len(df))
+        col3.metric(
+            "Risky Measurements",
+            f"{df['clinically_dangerous'].sum()} ({df['clinically_dangerous'].mean()*100:.1f}%)",
+            help="Measurements where the error was large enough to potentially mislead a doctor (over 20% off)."
+        )
+        col4.metric(
+            "Average Overlap Score",
+            f"{df['dice_score'].mean():.3f}",
+            help="How well the degraded tumor outline matches the original. 1.0 = perfect match, 0 = no match."
+        )
 
         st.markdown("---")
-        st.subheader("Mean ± Std grouped by Degradation Type & Level")
+        st.subheader("Average error and overlap, by scan problem and severity")
+        st.caption(
+            "Level 1 = mild problem, Level 2 = moderate, Level 3 = severe. "
+            "Volume error % = how far off the tumor size measurement was."
+        )
 
-        type_display = {"erosion": "Noise", "downsampling": "Downsampling", "motion_blur": "Motion Blur"}
         summary_df = (
             df.groupby(["degradation_type", "degradation_level"])[["volume_pct_error", "dice_score"]]
             .agg(["mean", "std"])
             .round(3)
         )
         summary_df.index = summary_df.index.map(
-            lambda x: (type_display.get(x[0], x[0]), x[1])
+            lambda x: (type_display.get(x[0], x[0]), f"Level {x[1]}")
         )
-        summary_df.index.names = ["Degradation Type", "Level"]
+        summary_df.index.names = ["Scan Problem", "Severity"]
+        summary_df.columns = ["Avg Size Error (%)", "Std Error (%)", "Avg Overlap Score", "Std Overlap"]
         st.dataframe(summary_df, use_container_width=True)
 
         st.markdown("---")
-        st.subheader("Clinical Danger Rate by Degradation")
+        st.subheader("How often did each scan problem cause a risky measurement?")
+        st.caption("A measurement is considered risky if it is more than 20% off — this is the medical threshold used by doctors.")
+
         danger_df = (
             df.assign(label=df.apply(
-                lambda r: f"{type_display.get(r['degradation_type'], r['degradation_type'])}-L{r['degradation_level']}",
+                lambda r: f"{type_display.get(r['degradation_type'], r['degradation_type'])} - Level {r['degradation_level']}",
                 axis=1
             ))
             .groupby("label")["clinically_dangerous"]
             .mean()
             .mul(100)
             .reset_index()
-            .rename(columns={"label": "Degradation", "clinically_dangerous": "% Dangerous"})
+            .rename(columns={"label": "Scan Problem", "clinically_dangerous": "% of Patients at Risk"})
         )
-        st.bar_chart(danger_df.set_index("Degradation"))
+        st.bar_chart(danger_df.set_index("Scan Problem"))
 
     # -----------------------------------------------------------------------
-    # TAB 2 — Results Table
+    # TAB 2 — Full Data Table
     # -----------------------------------------------------------------------
     with tab_results:
-        st.subheader("Full Results Table")
+        st.subheader("Full Data Table")
+        st.markdown("Every row is one patient + one scan problem combination. You can filter and download.")
 
-        # Filters
         col_f1, col_f2, col_f3 = st.columns(3)
         with col_f1:
             type_filter = st.multiselect(
-                "Degradation Type",
+                "Filter by scan problem",
                 options=df["degradation_type"].unique().tolist(),
                 default=df["degradation_type"].unique().tolist(),
+                format_func=lambda x: type_display.get(x, x),
             )
         with col_f2:
             level_filter = st.multiselect(
-                "Degradation Level",
+                "Filter by severity level",
                 options=sorted(df["degradation_level"].unique().tolist()),
                 default=sorted(df["degradation_level"].unique().tolist()),
+                format_func=lambda x: f"Level {x}",
             )
         with col_f3:
             danger_filter = st.selectbox(
-                "Clinically Dangerous",
-                options=["All", "Yes", "No"],
+                "Show only risky measurements?",
+                options=["Show all", "Risky only (>20% error)", "Safe only"],
                 index=0,
             )
 
         filtered = df[
             df["degradation_type"].isin(type_filter) &
             df["degradation_level"].isin(level_filter)
-        ]
-        if danger_filter == "Yes":
+        ].copy()
+        if danger_filter == "Risky only (>20% error)":
             filtered = filtered[filtered["clinically_dangerous"] == True]
-        elif danger_filter == "No":
+        elif danger_filter == "Safe only":
             filtered = filtered[filtered["clinically_dangerous"] == False]
 
+        # Rename columns to friendly names for display
+        display_cols = {
+            "patient_id":                   "Patient",
+            "degradation_type":             "Scan Problem",
+            "degradation_level":            "Severity",
+            "gold_whole_tumor_vol_mm3":     "Real Tumor Size (mm3)",
+            "degraded_whole_tumor_vol_mm3": "Measured Size After Degradation (mm3)",
+            "volume_MAE_mm3":               "Size Error (mm3)",
+            "volume_pct_error":             "Size Error (%)",
+            "gold_area_mm2":                "Real Tumor Area (mm2)",
+            "degraded_area_mm2":            "Measured Area After Degradation (mm2)",
+            "area_MAE_mm2":                 "Area Error (mm2)",
+            "dice_score":                   "Overlap Score",
+            "clinically_dangerous":         "Risky Measurement?",
+        }
+        display_df = filtered.rename(columns=display_cols)
+        display_df["Scan Problem"] = display_df["Scan Problem"].map(type_display).fillna(display_df["Scan Problem"])
+        display_df["Severity"] = display_df["Severity"].apply(lambda x: f"Level {x}")
+
         st.dataframe(
-            filtered.style.format({
-                "gold_whole_tumor_vol_mm3":     "{:.1f}",
-                "degraded_whole_tumor_vol_mm3": "{:.1f}",
-                "volume_MAE_mm3":               "{:.1f}",
-                "volume_pct_error":             "{:.2f}",
-                "gold_area_mm2":                "{:.1f}",
-                "degraded_area_mm2":            "{:.1f}",
-                "area_MAE_mm2":                 "{:.1f}",
-                "dice_score":                   "{:.4f}",
-            }).apply(
-                lambda col: ["background-color: #ffcccc" if v else "" for v in df["clinically_dangerous"]]
-                if col.name == "clinically_dangerous" else [""] * len(col),
-                axis=0,
-            ),
+            display_df.style.format({
+                "Real Tumor Size (mm3)":                  "{:.1f}",
+                "Measured Size After Degradation (mm3)":  "{:.1f}",
+                "Size Error (mm3)":                       "{:.1f}",
+                "Size Error (%)":                         "{:.2f}",
+                "Real Tumor Area (mm2)":                  "{:.1f}",
+                "Measured Area After Degradation (mm2)":  "{:.1f}",
+                "Area Error (mm2)":                       "{:.1f}",
+                "Overlap Score":                          "{:.4f}",
+            }),
             use_container_width=True,
             height=500,
         )
 
-        # Download button
         csv_bytes = filtered.to_csv(index=False).encode()
         st.download_button(
-            label="⬇️ Download filtered CSV",
+            label="Download this table as CSV",
             data=csv_bytes,
             file_name="results_filtered.csv",
             mime="text/csv",
         )
 
     # -----------------------------------------------------------------------
-    # TAB 3 — Plots
+    # TAB 3 — Charts
     # -----------------------------------------------------------------------
     with tab_plots:
-        st.subheader("Research Plots")
-
-        type_display_map = {
-            "erosion":      "Noise",
-            "downsampling": "Downsampling",
-            "motion_blur":  "Motion Blur",
-        }
+        st.subheader("Charts")
 
         df_plot = df.copy()
         df_plot["label"] = df_plot.apply(
-            lambda row: f"{type_display_map.get(row['degradation_type'], row['degradation_type'])}-L{row['degradation_level']}",
+            lambda row: f"{type_display.get(row['degradation_type'], row['degradation_type'])} - L{row['degradation_level']}",
             axis=1,
         )
         label_order = [
-            f"{d}-L{l}"
-            for d in ["Noise", "Downsampling", "Motion Blur"]
+            f"{d} - L{l}"
+            for d in ["Grainy Scan", "Blurry Scan", "Motion Blur"]
             for l in [1, 2, 3]
-            if f"{d}-L{l}" in df_plot["label"].unique()
+            if f"{d} - L{l}" in df_plot["label"].unique()
         ]
 
         import seaborn as sns
         sns.set_style("whitegrid")
 
-        # --- Plot 1: Line chart ---
-        st.markdown("#### Plot 1 — Volume Error vs Degradation Level")
+        # Chart 1
+        st.markdown("#### How does size error grow as the scan gets worse?")
+        st.caption(
+            "Each line is a different type of scan problem. "
+            "The red dashed line is the danger threshold — above it, the error is large enough to mislead a doctor."
+        )
         grouped = (
             df_plot.groupby(["degradation_type", "degradation_level"])["volume_pct_error"]
             .mean().reset_index()
         )
         fig1, ax1 = plt.subplots(figsize=(10, 5))
-        for deg_type, display_name in type_display_map.items():
+        for deg_type, display_name in type_display.items():
             sub = grouped[grouped["degradation_type"] == deg_type].sort_values("degradation_level")
             if not sub.empty:
                 ax1.plot(sub["degradation_level"], sub["volume_pct_error"], marker="o", label=display_name)
-        ax1.axhline(y=20, color="red", linestyle="--", label="Clinical Danger Threshold (RANO)")
+        ax1.axhline(y=20, color="red", linestyle="--", label="Danger Threshold (20% error)")
         ax1.set_xticks([1, 2, 3])
-        ax1.set_xlabel("Degradation Level")
-        ax1.set_ylabel("Mean Volume % Error (%)")
-        ax1.set_title("Tumor Volume Measurement Error vs. MRI Degradation Level")
+        ax1.set_xticklabels(["Level 1\n(Mild)", "Level 2\n(Moderate)", "Level 3\n(Severe)"])
+        ax1.set_xlabel("Severity of Scan Problem")
+        ax1.set_ylabel("Average Size Error (%)")
+        ax1.set_title("How much does tumor size measurement error grow as scan quality gets worse?")
         ax1.legend()
         fig1.tight_layout()
         st.pyplot(fig1)
@@ -402,28 +447,33 @@ if st.session_state.run_complete and st.session_state.results_df is not None:
 
         st.markdown("---")
 
-        # --- Plot 2: Box + strip ---
-        st.markdown("#### Plot 2 — Distribution of Volume Error by Degradation")
+        # Chart 2
+        st.markdown("#### How spread out are the errors across all patients?")
+        st.caption(
+            "Each box shows the range of errors for that scan problem. "
+            "Dots are individual patients. Above the red line = dangerous error."
+        )
         fig2, ax2 = plt.subplots(figsize=(12, 6))
         sns.boxplot(data=df_plot, x="label", y="volume_pct_error",
                     order=label_order, ax=ax2, hue="label",
                     palette="Set2", legend=False)
         sns.stripplot(data=df_plot, x="label", y="volume_pct_error",
                       order=label_order, ax=ax2, alpha=0.3, color="black", jitter=True)
-        ax2.axhline(y=20, color="red", linestyle="--", label="Clinical Danger Threshold (RANO)")
-        ax2.set_xlabel("Degradation Type and Level")
-        ax2.set_ylabel("Volume % Error (%)")
-        ax2.set_title("Distribution of Tumor Size Measurement Error by Degradation")
+        ax2.axhline(y=20, color="red", linestyle="--", label="Danger Threshold (20% error)")
+        ax2.set_xlabel("Scan Problem and Severity")
+        ax2.set_ylabel("Size Error (%)")
+        ax2.set_title("Spread of tumor size errors across all patients")
         ax2.legend()
-        plt.xticks(rotation=45, ha="right")
+        plt.xticks(rotation=30, ha="right")
         fig2.tight_layout()
         st.pyplot(fig2)
         plt.close(fig2)
 
         st.markdown("---")
 
-        # --- Plot 4: Bar chart ---
-        st.markdown("#### Plot 4 — % Patients Exceeding 20% Volume Error (RANO Threshold)")
+        # Chart 3
+        st.markdown("#### For each scan problem, what % of patients had a risky measurement?")
+        st.caption("A risky measurement is one that is more than 20% off from the real tumor size.")
         pct_d = (
             df_plot.groupby("label")["clinically_dangerous"].mean() * 100
         ).reset_index()
@@ -434,46 +484,55 @@ if st.session_state.run_complete and st.session_state.results_df is not None:
         fig4, ax4 = plt.subplots(figsize=(10, 5))
         ax4.bar(pct_d["label"].astype(str), pct_d["pct_dangerous"],
                 color=sns.color_palette("Set2", len(pct_d)))
-        ax4.set_xlabel("Degradation Type and Level")
-        ax4.set_ylabel("% Patients Exceeding 20% Volume Error")
-        ax4.set_title("Percentage of Patients Exceeding 20% Volume Error Threshold (RANO Clinical Limit)")
-        plt.xticks(rotation=45, ha="right")
+        ax4.set_xlabel("Scan Problem and Severity")
+        ax4.set_ylabel("% of Patients with Risky Measurement")
+        ax4.set_title("What % of patients had a measurement error over 20%?")
+        plt.xticks(rotation=30, ha="right")
         fig4.tight_layout()
         st.pyplot(fig4)
         plt.close(fig4)
 
-        # Download all saved PNGs if they exist
         st.markdown("---")
-        st.markdown("#### Download Saved Plots")
+        st.markdown("#### Download charts")
         col_d1, col_d2, col_d3, col_d4 = st.columns(4)
-        for col, fname in zip([col_d1, col_d2, col_d3, col_d4],
-                               ["plot1.png", "plot2.png", "plot3.png", "plot4.png"]):
+        for col, fname, label in zip(
+            [col_d1, col_d2, col_d3, col_d4],
+            ["plot1.png", "plot2.png", "plot3.png", "plot4.png"],
+            ["Line Chart", "Box Plot", "Scan Comparison", "Bar Chart"],
+        ):
             fpath = os.path.join(OUTPUT_DIR, fname)
             if os.path.exists(fpath):
                 with open(fpath, "rb") as f:
-                    col.download_button(f"⬇️ {fname}", f.read(), file_name=fname, mime="image/png")
+                    col.download_button(f"Download {label}", f.read(), file_name=fname, mime="image/png")
             else:
-                col.caption(f"{fname} not saved yet")
+                col.caption(f"{label} not saved yet — run the full pipeline first.")
 
     # -----------------------------------------------------------------------
-    # TAB 4 — Segmentation View (Plot 3)
+    # TAB 4 — Scan View
     # -----------------------------------------------------------------------
-    with tab_plot3:
-        st.subheader("Segmentation Boundary Comparison (Example Patient)")
+    with tab_scan:
+        st.subheader("Side-by-side Scan View")
+        st.markdown(
+            "This shows the actual brain scan for one patient. "
+            "The colored area is the tumor boundary — **green** is the original, **red** is what it looks like after the scan quality drops."
+        )
 
         if ep is None:
-            st.warning("Example patient data not available. Re-run the pipeline.")
+            st.warning("No scan data available. Please run the analysis first.")
         else:
-            st.markdown(f"**Patient:** `{ep['patient_id']}`")
+            st.markdown(f"**Showing patient:** `{ep['patient_id']}`")
 
             t1ce_data    = ep["t1ce_data"]
             seg_data     = ep["seg_data"]
             degradations = ep["degradations"]
             mid_idx      = ep["mid_slice_idx"]
 
-            # Slice selector
-            max_z = t1ce_data.shape[2] - 1
-            slice_idx = st.slider("Axial slice index", 0, max_z, mid_idx)
+            max_z     = t1ce_data.shape[2] - 1
+            slice_idx = st.slider(
+                "Move through the brain slices",
+                min_value=0, max_value=max_z, value=mid_idx,
+                help="Slide to scroll through the brain from bottom to top."
+            )
 
             t1ce_slice = t1ce_data[:, :, slice_idx]
             t1ce_min, t1ce_max = t1ce_slice.min(), t1ce_slice.max()
@@ -491,7 +550,6 @@ if st.session_state.run_complete and st.session_state.results_df is not None:
             blur_l2       = find_deg(degradations, "motion_blur",   2)
 
             def make_overlay(t1ce_norm, mask, color):
-                """Return a figure with t1ce + colored mask overlay."""
                 fig, ax = plt.subplots(figsize=(5, 5))
                 ax.imshow(t1ce_norm.T, cmap="gray", origin="lower")
                 if mask is not None:
@@ -510,44 +568,66 @@ if st.session_state.run_complete and st.session_state.results_df is not None:
             col_a, col_b, col_c, col_d = st.columns(4)
 
             with col_a:
-                st.caption("Original Mask")
+                st.caption("Original (clean scan)")
                 fig = make_overlay(t1ce_norm, original_mask, "green")
                 st.pyplot(fig); plt.close(fig)
 
             with col_b:
-                st.caption("Noise L2 (Erosion)")
+                st.caption("After: Grainy Scan (moderate)")
                 fig = make_overlay(t1ce_norm, noise_l2, "red")
                 st.pyplot(fig); plt.close(fig)
 
             with col_c:
-                st.caption("Downsampling L2")
+                st.caption("After: Blurry Scan (moderate)")
                 fig = make_overlay(t1ce_norm, down_l2, "red")
                 st.pyplot(fig); plt.close(fig)
 
             with col_d:
-                st.caption("Motion Blur L2")
+                st.caption("After: Motion Blur (moderate)")
                 fig = make_overlay(t1ce_norm, blur_l2, "red")
                 st.pyplot(fig); plt.close(fig)
 
             st.markdown(
-                "**Green** = original expert mask &nbsp;&nbsp; **Red** = degraded mask"
+                "**Green** = original tumor boundary from the clean scan  "
+                "&nbsp;&nbsp;  **Red** = boundary after scan quality drops"
             )
 
 else:
-    # No results yet
-    st.info(
-        "👈 Configure the pipeline in the sidebar and click **▶ Run Pipeline** to get started.\n\n"
-        "If you already ran `analyze.py` before, existing `results.csv` will be loaded automatically."
+    # Welcome screen
+    st.info("Use the settings on the left, then click **Run Analysis** to get started.")
+
+    st.markdown("### What does this tool do?")
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        st.markdown("#### The Problem")
+        st.markdown(
+            "When doctors measure a brain tumor from an MRI scan, "
+            "they need the measurement to be accurate. "
+            "But what if the scan quality is poor — grainy, blurry, or shaky?"
+        )
+
+    with col2:
+        st.markdown("#### What This Tool Tests")
+        st.markdown(
+            "It takes real brain tumor scans, makes the quality worse on purpose "
+            "(3 ways, 3 levels each), re-measures the tumor, "
+            "and checks how much the measurement changed."
+        )
+
+    with col3:
+        st.markdown("#### What You Get")
+        st.markdown(
+            "Charts and tables showing which scan problems cause the biggest errors, "
+            "and how often the error is large enough to matter clinically (over 20% off)."
+        )
+
+    st.markdown("---")
+    st.markdown("### How to use it")
+    st.markdown(
+        "1. **Choose how many patients** to analyze (start small to test quickly)\n"
+        "2. **Select which scan problems** to simulate\n"
+        "3. **Pick a patient** to view their brain scan up close\n"
+        "4. Click **Run Analysis** and wait for results\n"
+        "5. Explore the **Overview**, **Charts**, and **Scan View** tabs"
     )
-    st.markdown("""
-    ### What this tool does
-    | Step | Description |
-    |------|-------------|
-    | 1 | Discovers up to 100 valid BraTS 2021 patient folders |
-    | 2 | Computes gold-standard tumor volumes and areas from original seg masks |
-    | 3 | Simulates 9 degradation variants (erosion, downsampling, motion blur × 3 levels) |
-    | 4 | Re-measures tumor size from each degraded mask |
-    | 5 | Computes volume MAE, % error, Dice score, and RANO clinical danger flag |
-    | 6 | Saves results to `results.csv` |
-    | 7 | Generates 4 publication-quality plots |
-    """)
