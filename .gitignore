@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+
+# Data (large files — do not commit)
+Data/
+
+# Output artifacts (generated at runtime)
+results.csv
+plot1.png
+plot2.png
+plot3.png
+plot4.png
+
+# IDE / OS
+.vscode/
+.idea/
+*.DS_Store
+Thumbs.db
