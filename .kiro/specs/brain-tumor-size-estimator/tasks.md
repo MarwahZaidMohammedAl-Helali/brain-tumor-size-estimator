@@ -148,7 +148,7 @@ Implement a single Python script (`analyze.py`) in `C:\Users\marwa\Pictures\Marw
     - Create a mock patient with an unreadable file path; patch `discover_patients` to return that patient first followed by a valid one; assert `main()` completes and `all_records` contains results for the valid patient
     - _Requirements: 8.1_
 
-- [-] 10. Final checkpoint — ensure all tests pass
+- [ ] 10. Final checkpoint — ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
 ---
